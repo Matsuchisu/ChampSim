@@ -1,4 +1,15 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
+from tcn import compiled_tcn
+from tensorflow.keras.utils import Sequence
+from tensorflow import keras
+
+import numpy as np
+import math
+import config
+from dataFormator import dataFormatorTrain
+from dataFormator import dataFormatorGenerate
+
+ 
 
 class MLPrefetchModel(object):
     '''
@@ -51,15 +62,16 @@ class MLPrefetchModel(object):
         '''
         pass
 
-class NextLineModel(MLPrefetchModel):
+
+class FixedOffset(MLPrefetchModel):
 
     def load(self, path):
         # Load your pytorch / tensorflow model from the given filepath
-        print('Loading ' + path + ' for NextLineModel')
+        print('Has no model to load')
 
     def save(self, path):
         # Save your model to a file
-        print('Saving ' + path + ' for NextLineModel')
+        print('Has no model to save')
 
     def train(self, data):
         '''
@@ -68,7 +80,6 @@ class NextLineModel(MLPrefetchModel):
         The data is the same format given in the load traces. Namely:
         Unique Instr Id, Cycle Count, Load Address, Instruction Pointer of the Load, LLC hit/miss
         '''
-        print('Training NextLineModel')
 
     def generate(self, data):
         '''
@@ -80,87 +91,170 @@ class NextLineModel(MLPrefetchModel):
         The return format for this function is a list of (instr_id, pf_addr)
         tuples as shown below
         '''
-        print('Generating for NextLineModel')
+        print('Generating for Fixed-Offset')
         prefetches = []
-        for (instr_id, cycle_count, load_addr, load_ip, llc_hit) in data:
+        for (instr_id, _, load_addr, _, _) in data:
             # Prefetch the next two blocks
-            prefetches.append((instr_id, ((load_addr >> 6) + 1) << 6))
-            prefetches.append((instr_id, ((load_addr >> 6) + 2) << 6))
-
+            #prefetches.append((instr_id, ((load_addr >> 6) + 2) << 6))
+            prefetches.append((instr_id, ((load_addr >> 6) + 3) << 6))
+            
         return prefetches
 
-'''
-# Example PyTorch Model
-import torch
-import torch.nn as nn
 
-class PytorchMLModel(nn.Module):
-
-    def __init__(self):
-        super().__init__()
-        # Initialize your neural network here
-        # For example
-        self.embedding = nn.Embedding(...)
-        self.fc = nn.Linear(...)
-
-    def forward(self, x):
-        # Forward pass for your model here
-        # For example
-        return self.relu(self.fc(self.embedding(x)))
-
-class TerribleMLModel(MLPrefetchModel):
+class DataGenerator(Sequence):
     """
-    This class effectively functions as a wrapper around the above custom
-    pytorch nn.Module. You can approach this in another way so long as the the
-    load/save/train/generate functions behave as described above.
-
-    Disclaimer: It's terrible since the below criterion assumes a gold Y label
-    for the prefetches, which we don't really have. In any case, the below
-    structure more or less shows how one would use a ML framework with this
-    script. Happy coding / researching! :)
+    Generates data for Keras Sequence based data generator. 
+    Suitable for building data generator for training and prediction.
     """
 
+    def __init__(self, x,  y=0, batch_size=32, to_fit=True):
+        """
+        Initialization 
+        :param to_fit: True to return X and y, False to return X only
+        :param batch_size: batch size at each iteration
+        """
+        self.x = x
+        self.y = y
+        self.to_fit = to_fit
+        self.batch_size = batch_size
+
+    def __len__(self):
+        """
+        Denotes the number of batches per epoch 
+        :return: number of batches per epoch
+        """
+        return int(np.floor(len(self.x) / self.batch_size))
+
+    def __getitem__(self, index):
+        """
+        Generate one batch of data
+        :param index: index of the batch
+        :return: X and y when fitting. X only when predicting
+        """
+        indexes = np.arange(len(self.x))
+        # Generate indexes of the batch
+        indexes = indexes[index *
+                          self.batch_size: (index + 1) * self.batch_size]
+
+        # Generate data
+        X = self.x[indexes]
+
+        if self.to_fit:
+            y = self.y[indexes]
+            return X, y
+        else:
+            return X
+
+
+
+# nr of dilations
+nrDilations = math.ceil(math.log2((config.inputLength - 1)/(2 * (config.kernelSize - 1)) + 1))
+
+receptiveField = 1+2*(config.kernelSize-1)*((2**nrDilations)-1)
+
+
+def printConfig():
+    print("\n-----------TCN Config-----------\n")
+    print("Feature = ", config.feature)
+    print("Receptive field = ", receptiveField)
+    print("Input lenght = ", config.inputLength)
+    print("Number of dilations = ", nrDilations)
+    print("lookahead distance = ", config.lookahead)
+    print("Kernel size = ", config.kernelSize)
+    print("Number of filters = ", config.nrFilters)
+    print("Number of queues = ", config.nrQueues)
+    print("Number of residual = ", config.resBlocks)
+    print("degree = ", config.degree)
+    print("\n")
+
+
+# class TCN(tf.Module):
+
+#     def __init__(self):
+#         super().__init__()
+#         # Initialize TCN
+#         print("Initializing TCN")
+#         self.tcn = compiled_tcn(return_sequences=False,
+#                                 num_feat=1,
+#                                 num_classes=config.outputClasses,
+#                                 nb_filters=config.nrFilters,
+#                                 kernel_size=config.kernelSize,
+#                                 dilations=[2 ** i for i in range(nrDilations)],
+#                                 nb_stacks=config.resBlocks,
+#                                 max_len=config.inputLength,
+#                                 use_weight_norm=True,
+#                                 use_skip_connections=True)
+#         self.tcn.summary()
+
+def TCN():
+    print("Initializing TCN")
+    tcn = compiled_tcn(return_sequences=False,
+                        num_feat=1,
+                        num_classes=config.outputClasses,
+                        nb_filters=config.nrFilters,
+                        kernel_size=config.kernelSize,
+                        dilations=[2 ** i for i in range(nrDilations)],
+                        nb_stacks=config.resBlocks,
+                        max_len=config.inputLength,
+                        use_weight_norm=True,
+                        use_skip_connections=True)
+    tcn.summary()
+    return tcn
+
+
+class TCNPrefetcher(MLPrefetchModel):
+    """
+    TCN prefetcher
+    """
     def __init__(self):
-        self.model = PytorchMLModel()
-    
+        self.model = TCN()
+
     def load(self, path):
-        self.model = torch.load_state_dict(torch.load(path))
+        self.model = keras.models.load_model(path)
 
     def save(self, path):
-        torch.save(self.model.state_dict(), path)
+        self.model.save(path)
 
-    def train(self, data):
-        # Just standard run-time here
-        self.model.train()
-        criterion = nn.CrossEntropyLoss()
-        optimizer = nn.optim.Adam(self.model.parameters())
-        scheduler = nn.optim.lr_scheduler.StepLR(optimizer, step_size=0.1)
-        for epoch in range(20):
-            # Assuming batch(...) is a generator over the data
-            for i, (x, y) in enumerate(batch(data)):
-                y_pred = self.model(x)
-                loss = criterion(y_pred, y)
+    def train(self, train_data):
+        printConfig()
+        # format for TCN
+        x_train, y_train = dataFormatorTrain(train_data)
+        # train the model
+        self.model.fit(x_train, y_train, epochs=1, batch_size=config.trainBatchSize)
 
-                if i % 100 == 0:
-                    print('Loss:', loss.item())
+    def generate(self, pred_data):
+        print("Generating for TCN")
+        # format for TCN predictions
+        x_pred = dataFormatorGenerate(pred_data)
+       
+        # create data generator
+        print("Time for predictions")
+        pred_generator = DataGenerator(x_pred, batch_size=config.predBatchSize, to_fit=False)
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-            scheduler.step()
+        # predicted block index probabilities
+        predProb = []
+        predProb = self.model.predict(pred_generator)
 
-    def generate(self, data):
-        self.model.eval()
+        # sort probabilities from lowest to highest
+        sortedPredIndices = np.argsort(predProb)
+
+        prefetchBlocks = []
+        # for all prefetch predictions, get the "degree" number 
+        # of labels with highest probabilities
+        prefetchBlocks = sortedPredIndices[:,-config.degree:]
+
         prefetches = []
-        for i, (x, _) in enumerate(batch(data, random=False)):
-            y_pred = self.model(x)
-            
-            for xi, yi in zip(x, y_pred):
-                # Where instr_id is a function that extracts the unique instr_id
-                prefetches.append((instr_id(xi), yi))
+        for i in range(len(prefetchBlocks)):
+            for j in range(config.degree):
+                # clear page offset (12 low-order bits)
+                # and insert the Block index into the Block index part of address
+                predictedAddr = (pred_data[i][2] & ~0xFFF) | (prefetchBlocks[i][j] << 6)
+                # issue prefetch      instr_id
+                prefetches.append((pred_data[i][0], predictedAddr))
 
         return prefetches
-'''
 
-# Replace this if you create your own model
-Model = NextLineModel
+
+# FixedOffset, TCNPrefetcher
+
+Model = TCNPrefetcher
