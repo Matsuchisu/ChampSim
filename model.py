@@ -168,24 +168,6 @@ def printConfig():
     print("\n")
 
 
-# class TCN(tf.Module):
-
-#     def __init__(self):
-#         super().__init__()
-#         # Initialize TCN
-#         print("Initializing TCN")
-#         self.tcn = compiled_tcn(return_sequences=False,
-#                                 num_feat=1,
-#                                 num_classes=config.outputClasses,
-#                                 nb_filters=config.nrFilters,
-#                                 kernel_size=config.kernelSize,
-#                                 dilations=[2 ** i for i in range(nrDilations)],
-#                                 nb_stacks=config.resBlocks,
-#                                 max_len=config.inputLength,
-#                                 use_weight_norm=True,
-#                                 use_skip_connections=True)
-#         self.tcn.summary()
-
 def TCN():
     print("Initializing TCN")
     tcn = compiled_tcn(return_sequences=False,
